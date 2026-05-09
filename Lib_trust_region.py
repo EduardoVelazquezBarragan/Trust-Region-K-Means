@@ -85,6 +85,7 @@ def _pDogLeg_Seguro(g, delta, B):
     alpha_s = (-b + np.sqrt(discriminante)) / (2*a)
     
     return u + alpha_s * v
+
 def _SR1(y,s,B):
     """"
     Implementacion de la formula de SR1.
@@ -105,9 +106,11 @@ def mRC_SR1(f, x0, maxDelta=16,imax = 1000, tol=1e-5, delta=0.1, dogLeg=False):
     # Inicializamos el gradiente y la Hessiana exacta SOLO en el primer paso
     g = apGrad(f, x)
     B = apHess(f, x)
+    iter=imax
     for i in range(imax):
         if(LA.norm(g,np.inf)) <= tol:
-            print("Happy iteration in "+str(i))
+            iter=i
+            #print("Happy iteration in "+str(i))
             break
 
 
@@ -143,6 +146,6 @@ def mRC_SR1(f, x0, maxDelta=16,imax = 1000, tol=1e-5, delta=0.1, dogLeg=False):
             x = x_new
             g = g_new
 
-    return x
+    return x,iter
 
 
