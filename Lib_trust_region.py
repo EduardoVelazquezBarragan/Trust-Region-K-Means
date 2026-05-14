@@ -39,52 +39,110 @@ def _pDogLeg(g, delta,B):
 
     return pDL   
 
+
 def _pDogLeg_Seguro(g, delta, B):
     """
-    Método Dogleg adaptado para ser seguro con matrices Cuasi-Newton
-    como SR1 que pueden perder la propiedad de ser definidas positivas.
+    DogLeg seguro siguiendo las condiciones:
+
+    1. Si Cauchy está en la frontera, tomar Cauchy.
+    2. Si Newton está dentro del radio y es dirección de descenso, tomar Newton.
+    3. Si Newton está fuera, verificar:
+           (pB - pU)^T pU >= 0.
+       Si se cumple, tomar el punto combinado DogLeg.
+       Si no se cumple, tomar Cauchy.
     """
+
     norm_g = LA.norm(g)
+
+    # Si el gradiente es cero, no hay dirección de descenso.
+    if norm_g == 0:
+        return np.zeros_like(g)
+
     w = g / norm_g
     gBg = np.dot(g, B @ g)
-    
-    # 1. Calculamos el punto de Cauchy (pU)
+
+    # ---------------------------------------------------------
+    # 1. Punto de Cauchy pU
+    # ---------------------------------------------------------
     if gBg <= 0:
-        # Si la curvatura es negativa, la parábola se abre hacia abajo.
-        # Vamos directo a la frontera de la región de confianza.
+        # Curvatura no positiva: se toma Cauchy en la frontera.
         pU = -delta * w
     else:
-        alpha_u = (norm_g**2) / gBg
+        alpha_u = (norm_g ** 2) / gBg
         pU = -alpha_u * g
 
-    # Si el punto de Cauchy ya está fuera o en el borde de la región, lo truncamos y terminamos
-    if LA.norm(pU) >= delta:
-        return -delta * w
+        # Si Cauchy se sale del radio, se trunca a la frontera.
+        if LA.norm(pU) >= delta:
+            pU = -delta * w
 
-    # 2. Intentamos calcular el paso de Newton completo (pB)
+    # Si Cauchy está en la frontera, se toma Cauchy.
+    if LA.norm(pU) >= (1.0 - 1e-12) * delta:
+        return pU
+
+    # ---------------------------------------------------------
+    # 2. Paso de Newton / cuasi-Newton pB
+    # ---------------------------------------------------------
     try:
         pB = LA.solve(B, -g)
     except LA.LinAlgError:
-        # Si B es singular o casi singular, nos conformamos con el punto de Cauchy
+        # Si B es singular o casi singular, regresar a Cauchy.
         return pU
 
-    # Si el paso completo de Newton está dentro de la región, ¡lo tomamos!
-    if LA.norm(pB) <= delta:
+    # Verificamos si Newton es dirección de descenso.
+    # Para minimización se requiere:
+    #
+    #     g^T pB < 0
+    #
+    es_descenso = np.dot(g, pB) < 0
+
+    # Si Newton está dentro del radio y es dirección de descenso,
+    # se toma Newton.
+    if LA.norm(pB) <= delta and es_descenso:
         return pB
 
-    # 3. Intersección Dogleg: El paso de Newton está fuera, pero el Cauchy adentro.
-    # Buscamos el punto en la línea entre pU y pB que cruza la frontera de radio delta.
-    u = pU
-    v = pB - pU
-    a = np.dot(v, v)
-    b = 2 * np.dot(u, v)
-    c = np.dot(u, u) - delta**2
+    # Si Newton no es dirección de descenso, no usamos DogLeg.
+    if not es_descenso:
+        return pU
 
-    # Resolvemos la ecuación cuadrática a*t^2 + b*t + c = 0
-    discriminante = max(0, b**2 - 4*a*c) 
-    alpha_s = (-b + np.sqrt(discriminante)) / (2*a)
-    
-    return u + alpha_s * v
+    # ---------------------------------------------------------
+    # 3. Punto combinado DogLeg
+    # ---------------------------------------------------------
+    v = pB - pU
+
+    # Condición recomendada por el profesor:
+    #
+    #     (pB - pU)^T pU >= 0
+    #
+    if np.dot(v, pU) < 0:
+        return pU
+
+    # Buscamos alpha tal que:
+    #
+    #     ||pU + alpha (pB - pU)|| = delta
+    #
+    # con 0 <= alpha <= 1.
+    a = np.dot(v, v)
+    b = 2.0 * np.dot(pU, v)
+    c = np.dot(pU, pU) - delta ** 2
+
+    if a == 0:
+        return pU
+
+    discriminante = b ** 2 - 4.0 * a * c
+
+    if discriminante < 0:
+        return pU
+
+    alpha_s = (-b + np.sqrt(discriminante)) / (2.0 * a)
+
+    # Verificación de que el punto combinado realmente esté
+    # en el segmento entre Cauchy y Newton.
+    if alpha_s < 0 or alpha_s > 1:
+        return pU
+
+    pDL = pU + alpha_s * v
+
+    return pDL
 
 def _SR1(y,s,B):
     """"
@@ -100,7 +158,7 @@ def _SR1(y,s,B):
     
     
 def mRC_SR1(f, x0, maxDelta=16,imax = 1000, tol=1e-5, delta=0.1, dogLeg=False):
-    eta = 0.01
+    eta = 0.1
     x = x0.copy()
 
     # Inicializamos el gradiente y la Hessiana exacta SOLO en el primer paso
@@ -123,7 +181,9 @@ def mRC_SR1(f, x0, maxDelta=16,imax = 1000, tol=1e-5, delta=0.1, dogLeg=False):
         
 
         #Comprar reducciones del modelo con la funcion
-        rho =( f(x)-f(x+p))/(np.dot(-p,g+B@(0.5*p)))
+        redf=( f(x)-f(x+p))
+        redm=np.dot(-p,g+B@(0.5*p))
+        rho =redf/redm
 
         #Decision en base a la reduccion 
         if rho < 0.25:
